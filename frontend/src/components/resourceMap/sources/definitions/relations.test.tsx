@@ -18,6 +18,7 @@ import { renderHook } from '@testing-library/react';
 import App from '../../../../App';
 import ConfigMap from '../../../../lib/k8s/configMap';
 import CRD from '../../../../lib/k8s/crd';
+import EndpointSlice from '../../../../lib/k8s/endpointSlices';
 import Gateway from '../../../../lib/k8s/gateway';
 import { KubeObject, KubeObjectClass } from '../../../../lib/k8s/KubeObject';
 import PersistentVolumeClaim from '../../../../lib/k8s/persistentVolumeClaim';
@@ -467,5 +468,56 @@ describe('useGetAllRelations', () => {
       nonGroupingSide: 'source',
     });
     expect(relation.edgeAttributes?.(node(pvc(['ReadWriteOnce'])), node(matchingPod))).toEqual({});
+  });
+
+  it('matches endpoint slices to services using kubernetes.io/service-name label or ownerReferences', () => {
+    vi.spyOn(CRD, 'useList').mockReturnValue({ items: null } as ReturnType<typeof CRD.useList>);
+    const { result } = renderUseGetAllRelations();
+    const relation = relationById(result.current, 'endpointslices-service');
+    const targetService = service(
+      { uid: 'svc-1', name: 'kubernetes', namespace: 'default' },
+      {},
+      'cluster-a'
+    );
+
+    const sliceWithLabel = new EndpointSlice(
+      {
+        metadata: {
+          uid: 'slice-1',
+          name: 'kubernetes',
+          namespace: 'default',
+          labels: { 'kubernetes.io/service-name': 'kubernetes' },
+        },
+      } as any,
+      'cluster-a'
+    );
+
+    const sliceWithOwnerRef = new EndpointSlice(
+      {
+        metadata: {
+          uid: 'slice-2',
+          name: 'kubernetes-manual',
+          namespace: 'default',
+          ownerReferences: [{ kind: 'Service', name: 'kubernetes' }],
+        },
+      } as any,
+      'cluster-a'
+    );
+
+    const unrelatedSlice = new EndpointSlice(
+      {
+        metadata: {
+          uid: 'slice-3',
+          name: 'nginx-slice',
+          namespace: 'default',
+          labels: { 'kubernetes.io/service-name': 'nginx' },
+        },
+      } as any,
+      'cluster-a'
+    );
+
+    expect(relation.predicate(node(sliceWithLabel), node(targetService))).toBe(true);
+    expect(relation.predicate(node(sliceWithOwnerRef), node(targetService))).toBe(true);
+    expect(relation.predicate(node(unrelatedSlice), node(targetService))).toBe(false);
   });
 });
